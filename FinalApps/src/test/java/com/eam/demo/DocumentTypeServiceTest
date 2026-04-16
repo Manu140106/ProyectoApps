@@ -1,0 +1,242 @@
+package com.eam.demo;
+
+import com.eam.demo.dto.DocumentTypeRequest;
+import com.eam.demo.dto.DocumentTypeResponse;
+import com.eam.demo.entity.DocumentType;
+import com.eam.demo.entity.Organization;
+import com.eam.demo.exception.BadRequestException;
+import com.eam.demo.exception.NotFoundException;
+import com.eam.demo.repository.DocumentTypeRepository;
+import com.eam.demo.service.DocumentTypeService;
+import com.eam.demo.service.TenantContextService;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+
+import java.util.Arrays;
+import java.util.List;
+import java.util.Optional;
+
+import static org.assertj.core.api.Assertions.*;
+import static org.mockito.ArgumentMatchers.*;
+import static org.mockito.Mockito.*;
+
+@ExtendWith(MockitoExtension.class)
+@DisplayName("DocumentTypeService - Pruebas Unitarias")
+class DocumentTypeServiceTest {
+
+    @Mock private DocumentTypeRepository documentTypeRepository;
+    @Mock private TenantContextService tenantContextService;
+
+    @InjectMocks
+    private DocumentTypeService documentTypeService;
+
+    private Organization currentOrg;
+    private DocumentType savedType;
+    private DocumentTypeRequest validRequest;
+
+    @BeforeEach
+    void setUp() {
+        currentOrg = new Organization();
+        currentOrg.setId(1L);
+        currentOrg.setName("Empresa Demo");
+        currentOrg.setCode("EMP01");
+
+        savedType = new DocumentType();
+        savedType.setId(10L);
+        savedType.setName("Contrato");
+        savedType.setDescription("Documentos contractuales");
+        savedType.setActive(true);
+        savedType.setOrganization(currentOrg);
+
+        validRequest = new DocumentTypeRequest();
+        validRequest.setName("Contrato");
+        validRequest.setDescription("Documentos contractuales");
+        validRequest.setActive(true);
+    }
+
+    @Test
+    @DisplayName("LIST - Debe retornar tipos documentales de la organización ordenados")
+    void list_ShouldReturnDocumentTypesOrdered() {
+        DocumentType type2 = new DocumentType();
+        type2.setId(11L);
+        type2.setName("Factura");
+        type2.setDescription("Facturas comerciales");
+        type2.setActive(true);
+        type2.setOrganization(currentOrg);
+
+        when(tenantContextService.currentOrganization()).thenReturn(currentOrg);
+        when(documentTypeRepository.findAllByOrganizationOrderByNameAsc(currentOrg))
+                .thenReturn(Arrays.asList(savedType, type2));
+
+        List<DocumentTypeResponse> result = documentTypeService.list();
+
+        assertThat(result).hasSize(2);
+        assertThat(result).extracting("name").containsExactly("Contrato", "Factura");
+        verify(documentTypeRepository, times(1)).findAllByOrganizationOrderByNameAsc(currentOrg);
+    }
+
+    @Test
+    @DisplayName("LIST - Organización sin tipos debe retornar lista vacía")
+    void list_NoTypes_ShouldReturnEmptyList() {
+        when(tenantContextService.currentOrganization()).thenReturn(currentOrg);
+        when(documentTypeRepository.findAllByOrganizationOrderByNameAsc(currentOrg)).thenReturn(List.of());
+
+        List<DocumentTypeResponse> result = documentTypeService.list();
+
+        assertThat(result).isEmpty();
+    }
+
+    @Test
+    @DisplayName("CREATE - Tipo válido debe retornar DocumentTypeResponse con ID")
+    void create_ValidRequest_ShouldReturnDocumentTypeResponse() {
+        when(tenantContextService.currentOrganization()).thenReturn(currentOrg);
+        when(documentTypeRepository.existsByNameIgnoreCaseAndOrganization("Contrato", currentOrg)).thenReturn(false);
+        when(documentTypeRepository.save(any(DocumentType.class))).thenReturn(savedType);
+
+        DocumentTypeResponse result = documentTypeService.create(validRequest);
+
+        assertThat(result).isNotNull();
+        assertThat(result.getId()).isEqualTo(10L);
+        assertThat(result.getName()).isEqualTo("Contrato");
+        assertThat(result.getDescription()).isEqualTo("Documentos contractuales");
+        assertThat(result.isActive()).isTrue();
+        assertThat(result.getOrganizationId()).isEqualTo(1L);
+
+        verify(documentTypeRepository, times(1)).save(any(DocumentType.class));
+    }
+
+    @Test
+    @DisplayName("CREATE - Nombre duplicado en la organización debe lanzar BadRequestException")
+    void create_DuplicateName_ShouldThrowBadRequestException() {
+        when(tenantContextService.currentOrganization()).thenReturn(currentOrg);
+        when(documentTypeRepository.existsByNameIgnoreCaseAndOrganization("Contrato", currentOrg)).thenReturn(true);
+
+        assertThatThrownBy(() -> documentTypeService.create(validRequest))
+                .isInstanceOf(BadRequestException.class)
+                .hasMessageContaining("tipo documental");
+
+        verify(documentTypeRepository, never()).save(any());
+    }
+
+    @Test
+    @DisplayName("CREATE - active=null debe guardar como true por defecto")
+    void create_NullActive_ShouldDefaultToTrue() {
+        validRequest.setActive(null);
+
+        when(tenantContextService.currentOrganization()).thenReturn(currentOrg);
+        when(documentTypeRepository.existsByNameIgnoreCaseAndOrganization(anyString(), eq(currentOrg))).thenReturn(false);
+        when(documentTypeRepository.save(any(DocumentType.class))).thenReturn(savedType);
+
+        DocumentTypeResponse result = documentTypeService.create(validRequest);
+
+        assertThat(result).isNotNull();
+        verify(documentTypeRepository, times(1)).save(argThat(dt -> dt.isActive()));
+    }
+
+    @Test
+    @DisplayName("UPDATE - Tipo existente debe retornar datos actualizados")
+    void update_ExistingId_ShouldReturnUpdatedDocumentType() {
+        DocumentTypeRequest updateReq = new DocumentTypeRequest();
+        updateReq.setName("Contrato Actualizado");
+        updateReq.setDescription("Nueva descripción");
+        updateReq.setActive(false);
+
+        DocumentType updatedType = new DocumentType();
+        updatedType.setId(10L);
+        updatedType.setName("Contrato Actualizado");
+        updatedType.setDescription("Nueva descripción");
+        updatedType.setActive(false);
+        updatedType.setOrganization(currentOrg);
+
+        when(tenantContextService.currentOrganization()).thenReturn(currentOrg);
+        when(documentTypeRepository.findByIdAndOrganization(10L, currentOrg)).thenReturn(Optional.of(savedType));
+        when(documentTypeRepository.save(any(DocumentType.class))).thenReturn(updatedType);
+
+        DocumentTypeResponse result = documentTypeService.update(10L, updateReq);
+
+        assertThat(result.getName()).isEqualTo("Contrato Actualizado");
+        assertThat(result.isActive()).isFalse();
+        verify(documentTypeRepository, times(1)).save(any(DocumentType.class));
+    }
+
+    @Test
+    @DisplayName("UPDATE - active=null en update no debe cambiar el estado")
+    void update_NullActive_ShouldNotChangeActive() {
+        DocumentTypeRequest updateReq = new DocumentTypeRequest();
+        updateReq.setName("Contrato v2");
+        updateReq.setDescription("Desc");
+        updateReq.setActive(null);
+
+        when(tenantContextService.currentOrganization()).thenReturn(currentOrg);
+        when(documentTypeRepository.findByIdAndOrganization(10L, currentOrg)).thenReturn(Optional.of(savedType));
+        when(documentTypeRepository.save(any(DocumentType.class))).thenReturn(savedType);
+
+        assertThatCode(() -> documentTypeService.update(10L, updateReq)).doesNotThrowAnyException();
+
+        verify(documentTypeRepository, times(1)).save(any(DocumentType.class));
+    }
+
+    @Test
+    @DisplayName("UPDATE - ID inexistente debe lanzar NotFoundException")
+    void update_NonExistentId_ShouldThrowNotFoundException() {
+        when(tenantContextService.currentOrganization()).thenReturn(currentOrg);
+        when(documentTypeRepository.findByIdAndOrganization(999L, currentOrg)).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> documentTypeService.update(999L, validRequest))
+                .isInstanceOf(NotFoundException.class)
+                .hasMessageContaining("Tipo documental no encontrado");
+
+        verify(documentTypeRepository, never()).save(any());
+    }
+
+    @Test
+    @DisplayName("DELETE - Tipo existente debe eliminarse sin errores")
+    void delete_ExistingId_ShouldCompleteWithoutException() {
+        when(tenantContextService.currentOrganization()).thenReturn(currentOrg);
+        when(documentTypeRepository.findByIdAndOrganization(10L, currentOrg)).thenReturn(Optional.of(savedType));
+
+        assertThatCode(() -> documentTypeService.delete(10L)).doesNotThrowAnyException();
+
+        verify(documentTypeRepository, times(1)).delete(savedType);
+    }
+
+    @Test
+    @DisplayName("DELETE - ID inexistente debe lanzar NotFoundException")
+    void delete_NonExistentId_ShouldThrowNotFoundException() {
+        when(tenantContextService.currentOrganization()).thenReturn(currentOrg);
+        when(documentTypeRepository.findByIdAndOrganization(999L, currentOrg)).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> documentTypeService.delete(999L))
+                .isInstanceOf(NotFoundException.class)
+                .hasMessageContaining("Tipo documental no encontrado");
+
+        verify(documentTypeRepository, never()).delete(any());
+    }
+
+    @Test
+    @DisplayName("getEntityOrThrow - Tipo existente debe retornar la entidad")
+    void getEntityOrThrow_ExistingId_ShouldReturnEntity() {
+        when(documentTypeRepository.findByIdAndOrganization(10L, currentOrg)).thenReturn(Optional.of(savedType));
+
+        DocumentType result = documentTypeService.getEntityOrThrow(10L, currentOrg);
+
+        assertThat(result).isNotNull();
+        assertThat(result.getId()).isEqualTo(10L);
+        assertThat(result.getName()).isEqualTo("Contrato");
+    }
+
+    @Test
+    @DisplayName("getEntityOrThrow - ID inexistente debe lanzar NotFoundException")
+    void getEntityOrThrow_NonExistentId_ShouldThrowNotFoundException() {
+        when(documentTypeRepository.findByIdAndOrganization(999L, currentOrg)).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> documentTypeService.getEntityOrThrow(999L, currentOrg))
+                .isInstanceOf(NotFoundException.class)
+                .hasMessageContaining("Tipo documental no encontrado");
+    }
+}

@@ -1,0 +1,299 @@
+package com.eam.demo;
+
+import com.eam.demo.dto.UserRequest;
+import com.eam.demo.dto.UserResponse;
+import com.eam.demo.entity.Organization;
+import com.eam.demo.entity.Role;
+import com.eam.demo.entity.UserAccount;
+import com.eam.demo.exception.BadRequestException;
+import com.eam.demo.exception.NotFoundException;
+import com.eam.demo.repository.UserAccountRepository;
+import com.eam.demo.service.TenantContextService;
+import com.eam.demo.service.UserService;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.security.crypto.password.PasswordEncoder;
+
+import java.util.Arrays;
+import java.util.List;
+import java.util.Optional;
+
+import static org.assertj.core.api.Assertions.*;
+import static org.mockito.ArgumentMatchers.*;
+import static org.mockito.Mockito.*;
+
+@ExtendWith(MockitoExtension.class)
+@DisplayName("UserService - Pruebas Unitarias")
+class UserServiceTest {
+
+    @Mock private UserAccountRepository userAccountRepository;
+    @Mock private PasswordEncoder passwordEncoder;
+    @Mock private TenantContextService tenantContextService;
+
+    @InjectMocks
+    private UserService userService;
+
+    private Organization currentOrg;
+    private UserAccount existingUser;
+    private UserRequest validCreateRequest;
+
+    @BeforeEach
+    void setUp() {
+        currentOrg = new Organization();
+        currentOrg.setId(1L);
+        currentOrg.setName("Empresa Demo");
+        currentOrg.setCode("EMP01");
+
+        existingUser = new UserAccount();
+        existingUser.setId(5L);
+        existingUser.setFullName("Juan Pérez");
+        existingUser.setEmail("juan@demo.com");
+        existingUser.setPassword("$2a$hash");
+        existingUser.setRole(Role.USER);
+        existingUser.setActive(true);
+        existingUser.setOrganization(currentOrg);
+
+        validCreateRequest = new UserRequest();
+        validCreateRequest.setFullName("María Torres");
+        validCreateRequest.setEmail("maria@demo.com");
+        validCreateRequest.setPassword("SecurePass1!");
+        validCreateRequest.setRole(Role.USER);
+        validCreateRequest.setActive(true);
+    }
+
+    @Test
+    @DisplayName("LIST - Debe retornar todos los usuarios de la organización actual")
+    void listByCurrentOrganization_ShouldReturnUsers() {
+        UserAccount admin = new UserAccount();
+        admin.setId(1L);
+        admin.setFullName("Admin");
+        admin.setEmail("admin@demo.com");
+        admin.setRole(Role.ADMIN);
+        admin.setActive(true);
+        admin.setOrganization(currentOrg);
+
+        when(tenantContextService.currentOrganization()).thenReturn(currentOrg);
+        when(userAccountRepository.findAllByOrganizationOrderByCreatedAtDesc(currentOrg))
+                .thenReturn(Arrays.asList(admin, existingUser));
+
+        List<UserResponse> result = userService.listByCurrentOrganization();
+
+        assertThat(result).hasSize(2);
+        assertThat(result).extracting("email")
+                .containsExactly("admin@demo.com", "juan@demo.com");
+        verify(userAccountRepository, times(1)).findAllByOrganizationOrderByCreatedAtDesc(currentOrg);
+    }
+
+    @Test
+    @DisplayName("LIST - Sin usuarios debe retornar lista vacía")
+    void listByCurrentOrganization_NoUsers_ShouldReturnEmptyList() {
+        when(tenantContextService.currentOrganization()).thenReturn(currentOrg);
+        when(userAccountRepository.findAllByOrganizationOrderByCreatedAtDesc(currentOrg)).thenReturn(List.of());
+
+        List<UserResponse> result = userService.listByCurrentOrganization();
+
+        assertThat(result).isEmpty();
+    }
+
+    @Test
+    @DisplayName("CREATE - Usuario válido debe retornar UserResponse con ID")
+    void create_ValidRequest_ShouldReturnUserResponse() {
+        UserAccount newUser = new UserAccount();
+        newUser.setId(6L);
+        newUser.setFullName("María Torres");
+        newUser.setEmail("maria@demo.com");
+        newUser.setRole(Role.USER);
+        newUser.setActive(true);
+        newUser.setOrganization(currentOrg);
+
+        when(tenantContextService.currentOrganization()).thenReturn(currentOrg);
+        when(userAccountRepository.existsByEmailIgnoreCase("maria@demo.com")).thenReturn(false);
+        when(passwordEncoder.encode("SecurePass1!")).thenReturn("$2a$hash_maria");
+        when(userAccountRepository.save(any(UserAccount.class))).thenReturn(newUser);
+
+        UserResponse result = userService.create(validCreateRequest);
+
+        assertThat(result).isNotNull();
+        assertThat(result.getId()).isEqualTo(6L);
+        assertThat(result.getFullName()).isEqualTo("María Torres");
+        assertThat(result.getEmail()).isEqualTo("maria@demo.com");
+        assertThat(result.getRole()).isEqualTo(Role.USER);
+        assertThat(result.isActive()).isTrue();
+        assertThat(result.getOrganizationId()).isEqualTo(1L);
+
+        verify(passwordEncoder, times(1)).encode("SecurePass1!");
+        verify(userAccountRepository, times(1)).save(any(UserAccount.class));
+    }
+
+    @Test
+    @DisplayName("CREATE - Email duplicado debe lanzar BadRequestException")
+    void create_DuplicateEmail_ShouldThrowBadRequestException() {
+        when(tenantContextService.currentOrganization()).thenReturn(currentOrg);
+        when(userAccountRepository.existsByEmailIgnoreCase("maria@demo.com")).thenReturn(true);
+
+        assertThatThrownBy(() -> userService.create(validCreateRequest))
+                .isInstanceOf(BadRequestException.class)
+                .hasMessageContaining("usuario con ese email");
+
+        verify(userAccountRepository, never()).save(any());
+        verify(passwordEncoder, never()).encode(any());
+    }
+
+    @Test
+    @DisplayName("CREATE - Contraseña nula debe lanzar BadRequestException")
+    void create_NullPassword_ShouldThrowBadRequestException() {
+        validCreateRequest.setPassword(null);
+        when(tenantContextService.currentOrganization()).thenReturn(currentOrg);
+        when(userAccountRepository.existsByEmailIgnoreCase("maria@demo.com")).thenReturn(false);
+
+        assertThatThrownBy(() -> userService.create(validCreateRequest))
+                .isInstanceOf(BadRequestException.class)
+                .hasMessageContaining("clave es obligatoria");
+
+        verify(userAccountRepository, never()).save(any());
+    }
+
+    @Test
+    @DisplayName("CREATE - Contraseña en blanco debe lanzar BadRequestException")
+    void create_BlankPassword_ShouldThrowBadRequestException() {
+        validCreateRequest.setPassword("   ");
+        when(tenantContextService.currentOrganization()).thenReturn(currentOrg);
+        when(userAccountRepository.existsByEmailIgnoreCase("maria@demo.com")).thenReturn(false);
+
+        assertThatThrownBy(() -> userService.create(validCreateRequest))
+                .isInstanceOf(BadRequestException.class)
+                .hasMessageContaining("clave es obligatoria");
+
+        verify(userAccountRepository, never()).save(any());
+    }
+
+    @Test
+    @DisplayName("CREATE - role=null debe asignar USER por defecto")
+    void create_NullRole_ShouldDefaultToUserRole() {
+        validCreateRequest.setRole(null);
+
+        UserAccount savedWithDefault = new UserAccount();
+        savedWithDefault.setId(7L);
+        savedWithDefault.setFullName("María Torres");
+        savedWithDefault.setEmail("maria@demo.com");
+        savedWithDefault.setRole(Role.USER);
+        savedWithDefault.setActive(true);
+        savedWithDefault.setOrganization(currentOrg);
+
+        when(tenantContextService.currentOrganization()).thenReturn(currentOrg);
+        when(userAccountRepository.existsByEmailIgnoreCase("maria@demo.com")).thenReturn(false);
+        when(passwordEncoder.encode(anyString())).thenReturn("$2a$hash");
+        when(userAccountRepository.save(any(UserAccount.class))).thenReturn(savedWithDefault);
+
+        UserResponse result = userService.create(validCreateRequest);
+
+        assertThat(result.getRole()).isEqualTo(Role.USER);
+    }
+
+    @Test
+    @DisplayName("CREATE - active=null debe crear usuario activo por defecto")
+    void create_NullActive_ShouldDefaultToActive() {
+        validCreateRequest.setActive(null);
+
+        UserAccount savedActive = new UserAccount();
+        savedActive.setId(8L);
+        savedActive.setFullName("María Torres");
+        savedActive.setEmail("maria@demo.com");
+        savedActive.setRole(Role.USER);
+        savedActive.setActive(true);
+        savedActive.setOrganization(currentOrg);
+
+        when(tenantContextService.currentOrganization()).thenReturn(currentOrg);
+        when(userAccountRepository.existsByEmailIgnoreCase("maria@demo.com")).thenReturn(false);
+        when(passwordEncoder.encode(anyString())).thenReturn("$2a$hash");
+        when(userAccountRepository.save(any(UserAccount.class))).thenReturn(savedActive);
+
+        UserResponse result = userService.create(validCreateRequest);
+
+        assertThat(result.isActive()).isTrue();
+    }
+
+    @Test
+    @DisplayName("UPDATE - Usuario existente debe retornar datos actualizados")
+    void update_ExistingUser_ShouldReturnUpdatedUserResponse() {
+        UserRequest updateReq = new UserRequest();
+        updateReq.setFullName("Juan Pérez Actualizado");
+        updateReq.setEmail("juan@demo.com");
+        updateReq.setRole(Role.ADMIN);
+        updateReq.setActive(false);
+
+        UserAccount updatedUser = new UserAccount();
+        updatedUser.setId(5L);
+        updatedUser.setFullName("Juan Pérez Actualizado");
+        updatedUser.setEmail("juan@demo.com");
+        updatedUser.setRole(Role.ADMIN);
+        updatedUser.setActive(false);
+        updatedUser.setOrganization(currentOrg);
+
+        when(tenantContextService.currentOrganization()).thenReturn(currentOrg);
+        when(userAccountRepository.findByIdAndOrganization(5L, currentOrg)).thenReturn(Optional.of(existingUser));
+        when(userAccountRepository.save(any(UserAccount.class))).thenReturn(updatedUser);
+
+        UserResponse result = userService.update(5L, updateReq);
+
+        assertThat(result.getFullName()).isEqualTo("Juan Pérez Actualizado");
+        assertThat(result.getRole()).isEqualTo(Role.ADMIN);
+        assertThat(result.isActive()).isFalse();
+        verify(userAccountRepository, times(1)).save(any(UserAccount.class));
+    }
+
+    @Test
+    @DisplayName("UPDATE - ID inexistente debe lanzar NotFoundException")
+    void update_NonExistentId_ShouldThrowNotFoundException() {
+        when(tenantContextService.currentOrganization()).thenReturn(currentOrg);
+        when(userAccountRepository.findByIdAndOrganization(999L, currentOrg)).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> userService.update(999L, validCreateRequest))
+                .isInstanceOf(NotFoundException.class)
+                .hasMessageContaining("Usuario no encontrado");
+
+        verify(userAccountRepository, never()).save(any());
+    }
+
+    @Test
+    @DisplayName("UPDATE - Contraseña nueva debe ser cifrada antes de guardar")
+    void update_WithNewPassword_ShouldEncodePassword() {
+        UserRequest updateReq = new UserRequest();
+        updateReq.setFullName("Juan Pérez");
+        updateReq.setEmail("juan@demo.com");
+        updateReq.setRole(Role.USER);
+        updateReq.setPassword("NuevaPass123!");
+
+        when(tenantContextService.currentOrganization()).thenReturn(currentOrg);
+        when(userAccountRepository.findByIdAndOrganization(5L, currentOrg)).thenReturn(Optional.of(existingUser));
+        when(passwordEncoder.encode("NuevaPass123!")).thenReturn("$2a$new_hash");
+        when(userAccountRepository.save(any(UserAccount.class))).thenReturn(existingUser);
+
+        userService.update(5L, updateReq);
+
+        verify(passwordEncoder, times(1)).encode("NuevaPass123!");
+    }
+
+    @Test
+    @DisplayName("UPDATE - Sin contraseña nueva no debe invocar al encoder")
+    void update_WithoutNewPassword_ShouldNotEncodePassword() {
+        UserRequest updateReq = new UserRequest();
+        updateReq.setFullName("Juan Pérez");
+        updateReq.setEmail("juan@demo.com");
+        updateReq.setRole(Role.USER);
+        updateReq.setPassword(null);
+
+        when(tenantContextService.currentOrganization()).thenReturn(currentOrg);
+        when(userAccountRepository.findByIdAndOrganization(5L, currentOrg)).thenReturn(Optional.of(existingUser));
+        when(userAccountRepository.save(any(UserAccount.class))).thenReturn(existingUser);
+
+        userService.update(5L, updateReq);
+
+        verify(passwordEncoder, never()).encode(anyString());
+    }
+}
