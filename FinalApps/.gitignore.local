@@ -1,0 +1,41 @@
+# Environment variables
+.env
+.env.local
+
+# IDE
+.vscode/
+.idea/
+*.iml
+*.iws
+*.ipr
+
+# Build
+build/
+.gradle/
+*.jar
+*.war
+*.rar
+*.zip
+*.tar.gz
+
+# IDE specific files
+.classpath
+.project
+.settings/
+*.sublime-project
+*.sublime-workspace
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Local development
+storage/
+logs/
+*.log
+
+# Temporal
+tmp/
+temp/
+*.tmp
