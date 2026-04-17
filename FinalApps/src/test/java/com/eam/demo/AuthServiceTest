@@ -154,7 +154,7 @@ class AuthServiceTest {
 
         assertThat(result).isNotNull();
         assertThat(result.getToken()).isEqualTo("eyJhbGciOiJIUzI1NiJ9.test.token");
-        assertThat(result.getType()).isEqualTo("Bearer");
+        assertThat(result.getTokenType()).isEqualTo("Bearer");
         assertThat(result.getEmail()).isEqualTo("admin@demo.com");
         assertThat(result.getRole()).isEqualTo(Role.ADMIN);
         assertThat(result.getOrganizationId()).isEqualTo(1L);
