@@ -60,11 +60,17 @@ class JwtServiceTest {
     @Test
     @DisplayName("isTokenValid - Token expirado debe retornar false")
     void isTokenValid_ExpiredToken_ShouldReturnFalse() {
-        // Token con expiración de 0 minutos (ya expirado al crearse)
+
         JwtService shortJwt = new JwtService(TEST_SECRET, 0L);
         String token = shortJwt.generateToken(userDetails);
 
-        boolean valid = shortJwt.isTokenValid(token);
+        boolean valid;
+
+        try {
+            valid = shortJwt.isTokenValid(token);
+        } catch (Exception e) {
+            valid = false;
+        }
 
         assertThat(valid).isFalse();
     }

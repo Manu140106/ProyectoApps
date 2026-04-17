@@ -81,7 +81,6 @@ class DocumentServiceTest {
         when(file.getOriginalFilename()).thenReturn("contrato.pdf");
         when(file.getContentType()).thenReturn("application/pdf");
         when(file.getSize()).thenReturn(2048L);
-        when(file.isEmpty()).thenReturn(false);
 
         when(tenantContextService.currentOrganization()).thenReturn(org);
         when(tenantContextService.currentUserEntity()).thenReturn(owner);
